@@ -115,7 +115,7 @@ func CurlRequest(queryType, apiUrl, file string, params map[string]string) inter
 
 	//字符串构建规范请求 CanonicalRequest
 	canonicalRequest := authString + "\n" + queryType + "\n" + apiUrl + "\n" + queryParams + "\n" + signedHeader
-	fmt.Println(canonicalRequest)
+	
 	//签名
 	ySign, err := SignSha256WithRsa(canonicalRequest, config.YEEPAY_PRIKEY)
 	signToBase64 := ySign + "$SHA256"
