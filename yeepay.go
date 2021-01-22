@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"crypto"
+	"crypto/aes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -18,10 +19,12 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
+	"unicode"
 )
 
-func YeePay(ctx *gin.Context) {
+func YeePays(ctx *gin.Context) {
 	queryType := ctx.PostForm("query")
 	apiUrl := ctx.PostForm("apiurl")
 	data := map[string]string{
@@ -112,7 +115,7 @@ func CurlRequest(queryType, apiUrl, file string, params map[string]string) inter
 
 	//字符串构建规范请求 CanonicalRequest
 	canonicalRequest := authString + "\n" + queryType + "\n" + apiUrl + "\n" + queryParams + "\n" + signedHeader
-
+	fmt.Println(canonicalRequest)
 	//签名
 	ySign, err := SignSha256WithRsa(canonicalRequest, config.YEEPAY_PRIKEY)
 	signToBase64 := ySign + "$SHA256"
@@ -146,18 +149,76 @@ func CurlRequest(queryType, apiUrl, file string, params map[string]string) inter
 	return string(respByte)
 }
 
-type RSASecurity struct {
-	pubStr string          //公钥字符串
-	priStr string          //私钥字符串
-	pubkey *rsa.PublicKey  //公钥
-	prikey *rsa.PrivateKey //私钥
+// CurlRequest 易宝支付异步通知接口
+// @Summary 易宝支付异步通知接口
+// @Tags 易宝支付接口
+// @Accept application/json
+// @Produce application/json
+// @Success 200 {object}  string {"code":200,"data":"正常" ,"msg":"OK"}
+// @Router /yeepaycallback [POST]
+func YeepayCallback(ctx *gin.Context) {
+	response := ctx.PostForm("response")
+	customerIdentification := ctx.PostForm("customerIdentification")
+	if response == "" || customerIdentification == "" {
+		service.RespError(ctx, config.RETURN_CODE_ERROR, config.RETURN_MSG_INTERNALERROR)
+		return
+	}
+
+	//1.将报文中的 response 按 $ 拆分为 4 个字符串
+	f := func(c rune) bool {
+		if c == '$' {
+			return true
+		} else {
+			return false
+		}
+	}
+	newResp := strings.FieldsFunc(response, f)
+
+	//2.对第 1 个字符串做 BASE64 解码后，用商户私钥做 RSA 解密，得到对称密钥 randomKey；
+	randomKey, _ := PriKeyDecrypt(newResp[0], config.YEEPAY_PRIKEY)
+
+	//3.对第 2 个字符串做 BASE64 解码后，用第 3 个字符串指定的解密算法 AES对称密钥 randomKey 进行解密
+	encryptedDataToBase64, _ := base64.RawURLEncoding.DecodeString(newResp[1])
+	encryptedData := DecryptAes128Ecb(encryptedDataToBase64, []byte(randomKey))
+
+	//4.上述明文用 $ 分隔为 2 部分，第 1 部分为异步通知明文；第 2 部分为签名。用 YOP 平台公钥和第 4 部分指定的摘要算法（比如 SHA256），做 SHA256withRSA 签名，并与第二部分比较即可验证报文是否为 YOP 平台签发。
+	aesD := strings.FieldsFunc(string(encryptedData), f)
+	signData := strings.FieldsFunc(aesD[1], unicode.IsSpace)
+	err := VerifySignSha256WithRsa(aesD[0], signData[0], config.YEEPAY_PUBKEY)
+	if err != nil {
+		service.RespError(ctx, config.RETURN_CODE_ERROR, err.Error())
+		return
+	}
+	service.RespSucc(ctx)
+}
+
+//AES ECB加密
+func DecryptAes128Ecb(data, key []byte) []byte {
+	cipher, _ := aes.NewCipher([]byte(key))
+	decrypted := make([]byte, len(data))
+	size := 16
+	for bs, be := 0, size; bs < len(data); bs, be = bs+size, be+size {
+		cipher.Decrypt(decrypted[bs:be], data[bs:be])
+	}
+	return decrypted
+}
+
+// 私钥解密
+func PriKeyDecrypt(data, privateKey string) (string, error) {
+	databs, _ := base64.RawURLEncoding.DecodeString(data)
+	grsa := RSASecurity{}
+	grsa.SetPrivateKey(privateKey)
+	rsadata, err := grsa.PriKeyDECRYPT(databs)
+	if err != nil {
+		return "", err
+	}
+	return string(rsadata), nil
 }
 
 // 使用RSAWithSHA256算法签名
 func SignSha256WithRsa(data string, privateKey string) (string, error) {
 	grsa := RSASecurity{}
 	grsa.SetPrivateKey(privateKey)
-
 	sign, err := grsa.SignSha256WithRsa(data)
 	if err != nil {
 		return "", err
@@ -165,7 +226,7 @@ func SignSha256WithRsa(data string, privateKey string) (string, error) {
 	return sign, err
 }
 
-// *rsa.PublicKey
+// *rsa.PrivateKey
 func (rsas *RSASecurity) GetPrivatekey() (*rsa.PrivateKey, error) {
 	return getPriKey([]byte(rsas.priStr))
 }
@@ -194,9 +255,7 @@ func (rsas *RSASecurity) SetPrivateKey(priStr string) (err error) {
 	return err
 }
 
-/**
- * 使用RSAWithSHA256算法签名
- */
+//使用RSAWithSHA256算法签名
 func (rsas *RSASecurity) SignSha256WithRsa(data string) (string, error) {
 	sha256Hash := sha256.New()
 	s_data := []byte(data)
@@ -206,4 +265,76 @@ func (rsas *RSASecurity) SignSha256WithRsa(data string) (string, error) {
 	signByte, err := rsa.SignPKCS1v15(rand.Reader, rsas.prikey, crypto.SHA256, hashed)
 	sign := base64.RawURLEncoding.EncodeToString(signByte)
 	return string(sign), err
+}
+
+// 设置公钥
+func getPubKey(publickey []byte) (*rsa.PublicKey, error) {
+	// decode public key
+	block, _ := pem.Decode(publickey)
+	if block == nil {
+		return nil, errors.New("get public key error")
+	}
+	// x509 parse public key
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	return pub.(*rsa.PublicKey), err
+}
+
+// *rsa.PublicKey
+func (rsas *RSASecurity) GetPublickey() (*rsa.PublicKey, error) {
+	return getPubKey([]byte(rsas.pubStr))
+}
+
+// 设置公钥
+func (rsas *RSASecurity) SetPublicKey(pubStr string) (err error) {
+	rsas.pubStr = pubStr
+	rsas.pubkey, err = rsas.GetPublickey()
+	return err
+}
+
+// 公钥加密
+func PublicEncrypt(data, publicKey string) (string, error) {
+
+	grsa := RSASecurity{}
+	grsa.SetPublicKey(publicKey)
+
+	rsadata, err := grsa.PubKeyENCTYPT([]byte(data))
+	if err != nil {
+		return "", err
+	}
+
+	return base64.RawURLEncoding.EncodeToString(rsadata), nil
+}
+
+// 公钥加密
+func (rsas *RSASecurity) PubKeyENCTYPT(input []byte) ([]byte, error) {
+	if rsas.pubkey == nil {
+		return []byte(""), errors.New(`Please set the public key in advance`)
+	}
+	output := bytes.NewBuffer(nil)
+	err := pubKeyIO(rsas.pubkey, bytes.NewReader(input), output, true)
+	if err != nil {
+		return []byte(""), err
+	}
+	return ioutil.ReadAll(output)
+}
+
+// 使用RSAWithSHA256验证签名
+func VerifySignSha256WithRsa(data string, signData string, publicKey string) error {
+	grsa := RSASecurity{}
+	grsa.SetPublicKey(publicKey)
+	return grsa.VerifySignSha256WithRsa(data, signData)
+}
+
+//使用RSAWithSHA256验证签名
+func (rsas *RSASecurity) VerifySignSha256WithRsa(data string, signData string) error {
+	sign, err := base64.RawURLEncoding.DecodeString(signData)
+	if err != nil {
+		return err
+	}
+	hash := sha256.New()
+	hash.Write([]byte(data))
+	return rsa.VerifyPKCS1v15(rsas.pubkey, crypto.SHA256, hash.Sum(nil), sign)
 }
