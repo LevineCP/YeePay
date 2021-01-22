@@ -115,7 +115,6 @@ func CurlRequest(queryType, apiUrl, file string, params map[string]string) inter
 
 	//字符串构建规范请求 CanonicalRequest
 	canonicalRequest := authString + "\n" + queryType + "\n" + apiUrl + "\n" + queryParams + "\n" + signedHeader
-	
 	//签名
 	ySign, err := SignSha256WithRsa(canonicalRequest, config.YEEPAY_PRIKEY)
 	signToBase64 := ySign + "$SHA256"
@@ -149,7 +148,7 @@ func CurlRequest(queryType, apiUrl, file string, params map[string]string) inter
 	return string(respByte)
 }
 
-// CurlRequest 易宝支付异步通知接口
+// YeepayCallback 易宝支付异步通知接口
 // @Summary 易宝支付异步通知接口
 // @Tags 易宝支付接口
 // @Accept application/json
@@ -159,9 +158,15 @@ func CurlRequest(queryType, apiUrl, file string, params map[string]string) inter
 func YeepayCallback(ctx *gin.Context) {
 	response := ctx.PostForm("response")
 	customerIdentification := ctx.PostForm("customerIdentification")
+	e := CallbackRequest(response, customerIdentification)
+	service.RespData(ctx, e)
+}
+
+// CallbackRequest 易宝支付异步通知接口
+func CallbackRequest(response, customerIdentification string) interface{} {
+
 	if response == "" || customerIdentification == "" {
-		service.RespError(ctx, config.RETURN_CODE_ERROR, config.RETURN_MSG_INTERNALERROR)
-		return
+		return config.RETURN_MSG_INTERNALERROR
 	}
 
 	//1.将报文中的 response 按 $ 拆分为 4 个字符串
@@ -186,10 +191,9 @@ func YeepayCallback(ctx *gin.Context) {
 	signData := strings.FieldsFunc(aesD[1], unicode.IsSpace)
 	err := VerifySignSha256WithRsa(aesD[0], signData[0], config.YEEPAY_PUBKEY)
 	if err != nil {
-		service.RespError(ctx, config.RETURN_CODE_ERROR, err.Error())
-		return
+		return err.Error()
 	}
-	service.RespSucc(ctx)
+	return aesD[0]
 }
 
 //AES ECB加密
