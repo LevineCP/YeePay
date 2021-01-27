@@ -48,7 +48,7 @@ func YeePays(ctx *gin.Context) {
 // @Param params query string true "请求的数据"
 // @Success 200 {object}  string {"code":200,"data":"正常" ,"msg":"OK"}
 // @Router /curlRequest [POST]
-func CurlRequest(queryType, apiUrl, file string, params map[string]string) interface{} {
+func CurlRequest(queryType, apiUrl, file string, params map[string]string) string {
 
 	urlApi := config.YEEPAY_API_URL
 	if file != "" {
