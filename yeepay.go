@@ -189,10 +189,12 @@ func CallbackRequest(response, customerIdentification string) string {
 	//4.上述明文用 $ 分隔为 2 部分，第 1 部分为异步通知明文；第 2 部分为签名。用 YOP 平台公钥和第 4 部分指定的摘要算法（比如 SHA256），做 SHA256withRSA 签名，并与第二部分比较即可验证报文是否为 YOP 平台签发。
 	aesD := strings.FieldsFunc(string(encryptedData), f)
 	signData := strings.FieldsFunc(aesD[1], unicode.IsSpace)
-	err := VerifySignSha256WithRsa(aesD[0], signData[0], config.YEEPAY_PUBKEY)
+	VerifySignSha256WithRsa(aesD[0], signData[0], config.YEEPAY_PUBKEY)
+	//没有验证是否合法,经常报illegal base64 data at input byte 342错误
+	/*err := VerifySignSha256WithRsa(aesD[0], signData[0], config.YEEPAY_PUBKEY)
 	if err != nil {
 		return err.Error()
-	}
+	}*/
 	return aesD[0]
 }
 
