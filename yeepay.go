@@ -163,7 +163,7 @@ func YeepayCallback(ctx *gin.Context) {
 }
 
 // CallbackRequest 易宝支付异步通知接口
-func CallbackRequest(response, customerIdentification string) interface{} {
+func CallbackRequest(response, customerIdentification string) string {
 
 	if response == "" || customerIdentification == "" {
 		return config.RETURN_MSG_INTERNALERROR
