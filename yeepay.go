@@ -15,9 +15,13 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"io"
 	"io/ioutil"
+	"log"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -74,20 +78,23 @@ func CurlRequest(queryType, apiUrl, file string, params map[string]string) strin
 	//认证字符串
 	authString := protocolVersion + "/" + appKey + "/" + timestamp + "/" + expiredSeconds
 
-	//请求参数
-	var dataParams string
-	//ksort
-	var keys []string
-	for k := range params {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+	queryParams := ""
+	if len(params) > 0 {
+		//请求参数
+		var dataParams string
+		//ksort
+		var keys []string
+		for k := range params {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
 
-	//拼接
-	for _, k := range keys {
-		dataParams = dataParams + url.QueryEscape(k) + "=" + url.QueryEscape(params[k]) + "&"
+		//拼接
+		for _, k := range keys {
+			dataParams = dataParams + url.QueryEscape(k) + "=" + url.QueryEscape(params[k]) + "&"
+		}
+		queryParams = dataParams[0 : len(dataParams)-1]
 	}
-	queryParams := dataParams[0 : len(dataParams)-1]
 
 	//请求头参数
 	requestId := service.GetRandomString(32, 0)
@@ -125,8 +132,33 @@ func CurlRequest(queryType, apiUrl, file string, params map[string]string) strin
 	client := &http.Client{}
 	req, err := http.NewRequest(queryType, urlApi+apiUrl+"?"+queryParams, nil)
 	if queryType == "POST" {
-		req, err = http.NewRequest(queryType, urlApi+apiUrl, bytes.NewBufferString(queryParams))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
+		if file != "" {
+			bodyBuf := &bytes.Buffer{}
+			bodyWrite := multipart.NewWriter(bodyBuf)
+			files, err := os.Open(file)
+			defer files.Close()
+			if err != nil {
+				log.Println("err1", err.Error())
+			}
+			// file 为key
+			fileWrite, err := bodyWrite.CreateFormFile("merQual", "img.jpg")
+			_, err = io.Copy(fileWrite, files)
+			if err != nil {
+				log.Println("err2", err.Error())
+			}
+			bodyWrite.Close() //要关闭，会将w.w.boundary刷写到w.writer中
+			// 创建请求
+			contentType := bodyWrite.FormDataContentType()
+			req, err = http.NewRequest(queryType, urlApi+apiUrl, bodyBuf)
+			if err != nil {
+				log.Println("err3", err.Error())
+			}
+			// 设置头
+			req.Header.Set("Content-Type", contentType)
+		} else {
+			req, err = http.NewRequest(queryType, urlApi+apiUrl, bytes.NewBufferString(queryParams))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8")
+		}
 	}
 
 	req.Header.Set("authorization", authorization)
