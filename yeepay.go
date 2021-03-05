@@ -4,13 +4,15 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/aes"
+	"crypto/md5"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
-	"edu-api/app/config"
-	"edu-api/app/service"
+	"edu-mg/app/config"
+	"edu-mg/app/service"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -18,6 +20,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	rand2 "math/rand"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -27,19 +30,6 @@ import (
 	"time"
 	"unicode"
 )
-
-func YeePays(ctx *gin.Context) {
-	queryType := ctx.PostForm("query")
-	apiUrl := ctx.PostForm("apiurl")
-	data := map[string]string{
-		"parentMerchantNo": "10085853178",
-		"merchantNo":       "10085853178",
-		"orderId":          "10085853178",
-	}
-	file := ctx.PostForm("file")
-	e := CurlRequest(queryType, apiUrl, file, data)
-	service.RespData(ctx, e)
-}
 
 // CurlRequest 易宝支付请求签名接口
 // @Summary 易宝支付请求签名接口
@@ -52,16 +42,15 @@ func YeePays(ctx *gin.Context) {
 // @Param params query string true "请求的数据"
 // @Success 200 {object}  string {"code":200,"data":"正常" ,"msg":"OK"}
 // @Router /curlRequest [POST]
-func CurlRequest(queryType, apiUrl, file string, params map[string]string) string {
+func CurlRequest(queryType, apiUrl, file, appKey string, params map[string]string) string {
 
-	urlApi := config.YEEPAY_API_URL
+	urlApi := "https://openapi.yeepay.com/yop-center"
 	if file != "" {
 		//上传文件的接口地址
-		urlApi = config.YEEPAY_YOS_API_URL
+		urlApi = "https://yos.yeepay.com/yop-center"
 	}
 
 	//appKey
-	appKey := config.PUBLIC_APP_KEY
 
 	//请求日期值
 	timeString := fmt.Sprintf("%s", time.Now().Format("2006-01-02 15:04:05"))
@@ -97,8 +86,8 @@ func CurlRequest(queryType, apiUrl, file string, params map[string]string) strin
 	}
 
 	//请求头参数
-	requestId := service.GetRandomString(32, 0)
-	sessionId := service.MD5V(requestId)
+	requestId := GetRandomString(32, 0)
+	sessionId := MD5V(requestId)
 	queryHeader := map[string]string{
 		"x-yop-request-id": requestId,
 	}
@@ -178,6 +167,37 @@ func CurlRequest(queryType, apiUrl, file string, params map[string]string) strin
 	//panic("12345")
 	//返回成功
 	return string(respByte)
+}
+
+// 生成md5字符串
+func MD5V(str string) string {
+	h := md5.New()
+	h.Write([]byte(str))
+	return strings.ToUpper(hex.EncodeToString(h.Sum(nil)))
+}
+
+//生成随机字符串
+// 1：数字 2：小写字母 3：大写字母 4：数字大小写混合
+func GetRandomString(length int, alphanum int) string {
+	var str = ""
+	switch alphanum {
+	case 1:
+		str = "0123456789"
+	case 2:
+		str = "abcdefghijklmnopqrstuvwxyz"
+	case 3:
+		str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	default:
+		str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	}
+
+	bts := []byte(str)
+	result := []byte{}
+	r := rand2.New(rand2.NewSource(time.Now().UnixNano()))
+	for i := 0; i < length; i++ {
+		result = append(result, bts[r.Intn(len(bts))])
+	}
+	return string(result)
 }
 
 // YeepayCallback 易宝支付异步通知接口
