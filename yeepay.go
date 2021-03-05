@@ -9,8 +9,6 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
-	"edu-mg/app/config"
-	"edu-mg/app/service"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
@@ -39,10 +37,12 @@ import (
 // @Param queryType query string true "请求类型"
 // @Param apiUrl query string true "接口名"
 // @Param file query string true "上传的文件"
+// @Param appKey query string true "易宝appkey"
+// @Param yeepayPrikey query string true "私钥"
 // @Param params query string true "请求的数据"
 // @Success 200 {object}  string {"code":200,"data":"正常" ,"msg":"OK"}
 // @Router /curlRequest [POST]
-func CurlRequest(queryType, apiUrl, file, appKey string, params map[string]string) string {
+func CurlRequest(queryType, apiUrl, file, appKey, yeepayPrikey string, params map[string]string) string {
 
 	urlApi := "https://openapi.yeepay.com/yop-center"
 	if file != "" {
@@ -112,7 +112,7 @@ func CurlRequest(queryType, apiUrl, file, appKey string, params map[string]strin
 	//字符串构建规范请求 CanonicalRequest
 	canonicalRequest := authString + "\n" + queryType + "\n" + apiUrl + "\n" + queryParams + "\n" + signedHeader
 	//签名
-	ySign, err := SignSha256WithRsa(canonicalRequest, config.YEEPAY_PRIKEY)
+	ySign, err := SignSha256WithRsa(canonicalRequest, yeepayPrikey)
 	signToBase64 := ySign + "$SHA256"
 
 	//
@@ -207,18 +207,20 @@ func GetRandomString(length int, alphanum int) string {
 // @Produce application/json
 // @Success 200 {object}  string {"code":200,"data":"正常" ,"msg":"OK"}
 // @Router /yeepaycallback [POST]
-func YeepayCallback(ctx *gin.Context) {
+func YeepayCallback(ctx *gin.Context) interface{} {
 	response := ctx.PostForm("response")
 	customerIdentification := ctx.PostForm("customerIdentification")
-	e := CallbackRequest(response, customerIdentification)
-	service.RespData(ctx, e)
+	yeepayPrikey := "" //私钥
+	yeepayPubkey := "" //公钥
+	e := CallbackRequest(response, customerIdentification, yeepayPrikey, yeepayPubkey)
+	return e
 }
 
 // CallbackRequest 易宝支付异步通知接口
-func CallbackRequest(response, customerIdentification string) string {
+func CallbackRequest(response, customerIdentification, yeepayPrikey, yeepayPubkey string) string {
 
 	if response == "" || customerIdentification == "" {
-		return config.RETURN_MSG_INTERNALERROR
+		return "错误"
 	}
 
 	//1.将报文中的 response 按 $ 拆分为 4 个字符串
@@ -232,7 +234,7 @@ func CallbackRequest(response, customerIdentification string) string {
 	newResp := strings.FieldsFunc(response, f)
 
 	//2.对第 1 个字符串做 BASE64 解码后，用商户私钥做 RSA 解密，得到对称密钥 randomKey；
-	randomKey, _ := PriKeyDecrypt(newResp[0], config.YEEPAY_PRIKEY)
+	randomKey, _ := PriKeyDecrypt(newResp[0], yeepayPrikey)
 
 	//3.对第 2 个字符串做 BASE64 解码后，用第 3 个字符串指定的解密算法 AES对称密钥 randomKey 进行解密
 	encryptedDataToBase64, _ := base64.RawURLEncoding.DecodeString(newResp[1])
@@ -241,9 +243,9 @@ func CallbackRequest(response, customerIdentification string) string {
 	//4.上述明文用 $ 分隔为 2 部分，第 1 部分为异步通知明文；第 2 部分为签名。用 YOP 平台公钥和第 4 部分指定的摘要算法（比如 SHA256），做 SHA256withRSA 签名，并与第二部分比较即可验证报文是否为 YOP 平台签发。
 	aesD := strings.FieldsFunc(string(encryptedData), f)
 	signData := strings.FieldsFunc(aesD[1], unicode.IsSpace)
-	VerifySignSha256WithRsa(aesD[0], signData[0], config.YEEPAY_PUBKEY)
+	VerifySignSha256WithRsa(aesD[0], signData[0], yeepayPubkey)
 	//没有验证是否合法,经常报illegal base64 data at input byte 342错误
-	/*err := VerifySignSha256WithRsa(aesD[0], signData[0], config.YEEPAY_PUBKEY)
+	/*err := VerifySignSha256WithRsa(aesD[0], signData[0], yeepayPubkey)
 	if err != nil {
 		return err.Error()
 	}*/
