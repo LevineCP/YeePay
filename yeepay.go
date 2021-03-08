@@ -48,8 +48,6 @@ func CurlRequest(queryType, apiUrl, file, appKey string, params map[string]strin
 		urlApi = "https://yos.yeepay.com/yop-center"
 	}
 
-	//appKey
-
 	//请求日期值
 	timeString := fmt.Sprintf("%s", time.Now().Format("2006-01-02 15:04:05"))
 	timeStrYmd := timeString[:10]
